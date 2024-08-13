@@ -3,11 +3,6 @@
 # source .venv/bin/activate
 # python3 -m pip install crowdstrike-falconpy
 
-# Export your FALCON_CLIENT_ID and FALCON_CLIENT_SECRET
-
-# Install required modules
-# pip install -r requirements.txt
-
 
 import os
 from falconpy import KubernetesProtection
@@ -26,14 +21,14 @@ offset = 0          # Start with the first record
 total = 1           
 position = None
 
-all_containers = []
+all_unassessed_images = []
 
 count = 0
 # A simple filter for the query operation
 # https://falcon.crowdstrike.com/documentation/page/d3c84a1b/falcon-query-language-fql#t3b5286b
 # filter=last_seen:>'2024-08-04T10:42:18.464Z'
 # filter=first_seen:>'2024-08-04T10:42:18.464Z'
-filter = "image_has_been_assessed: false,running_status: true"
+filter = "image_has_been_assessed: false,running_status: true, last_seen:>'2024-08-05T10:42:18.464Z'"
 
 while offset < total:
 # while count < 1 :  # or response["status_code"] == 500
@@ -46,56 +41,62 @@ while offset < total:
     if response["status_code"] == 200:
         result = response["body"]
         offset = result["meta"]["pagination"]["offset"]
+
+        print(response["body"]["meta"]["pagination"])
        
         # This will be the same every time, overrides our initial value of 1.
         total = result["meta"]["pagination"]["total"]
         
-        if offset == 0:
-            print("Total number of results: ", total)
-        
-        containers = result["resources"]
+        unassessed_images = result["resources"]
 
         # set the new offset
-        offset = offset + len(containers)
-        print("New offset: ", offset)
+        offset = offset + len(unassessed_images)
 
-        for container in containers:
-            all_containers.append(container)
+        for image in unassessed_images:
+            all_unassessed_images.append(image)
+
+        with open('unassessed_images.json', 'a') as unassessed_images_file:
+            unassessed_images_file.write("%s\n" % json.dumps(unassessed_images, indent=2))
 
     else:
         # API error has occurred
         for error_result in response["body"]["errors"]:
             print(error_result["message"])
         break
+    count = count + 1
 
 # remove duplicates
-filtered_containers = []
+
+filtered_images = []
 done = set()
 
-for container in all_containers:
-    if container['container_id'] == None:
+for image in all_unassessed_images:
+    if image['image_id'] == None:
         continue
     else:
-        if container['container_id'] not in done:
-            done.add(container['container_id'])
-            filtered_containers.append(container)
+        if image['image_id'] not in done:
+            done.add(image['image_id'])
+            filtered_images.append(image)
 
-with open('containers.json', 'w') as filtered_containers_file:
-    filtered_containers_file.write("%s\n" % json.dumps(filtered_containers, indent=2))
+print(len(all_unassessed_images))
+print(len(filtered_images))
+
+with open('unassessed_images.json', 'w') as unassessed_images_file:
+    unassessed_images_file.write("%s\n" % json.dumps(filtered_images, indent=2))
     
 # Filter required fields into CSV file
 # Create CSV header
-column_headers = ['container_registry', 'container_repository', 'container_tag', 'container_id', 'container_digest']
-with open('containers.csv', 'w') as csvfile:
+column_headers = ['image_registry', 'image_repository', 'image_tag', 'image_id', 'image_digest']
+with open('unassessed_images.csv', 'w') as csvfile:
     writer = csv.DictWriter(csvfile, fieldnames = column_headers)
     writer.writeheader()
 
 # Filter the data and write to CSV file
-for container in filtered_containers:
-#for unassessed_container in containers['body']['resources']:
-    container_details = {key: value for key, value in container.items() if "container_registry" in key or "container_repository" in key or "container_tag" in key or "container_id" in key or "container_digest" in key}
-    #print(container_details)
-    with open('containers.csv', 'a') as csvfile:
+for image in filtered_images:
+#for unassessed_image in unassessed_images['body']['resources']:
+    image_details = {key: value for key, value in image.items() if "image_registry" in key or "image_repository" in key or "image_tag" in key or "image_id" in key or "image_digest" in key}
+    #print(image_details)
+    with open('unassessed_images.csv', 'a') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames = column_headers)
-        writer.writerow(container_details)
+        writer.writerow(image_details)
 
